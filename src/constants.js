@@ -1,11 +1,56 @@
-export const GAME_WIDTH = 800;
+export const GAME_WIDTH = 1200; // Increased from 800
 export const GAME_HEIGHT = 400;
 export const BASE_HP = 100;
 export const PLAYER_GOLD_RATE = 1; // per second
 export const ENEMY_GOLD_RATE = 0.8; // per second
 export const FPS = 60;
+export const GOLD_PER_KILL = 5;
 export const EVOLUTION_COST = 150;
-export const AI_EVOLUTION_THRESHOLD = 200; // Accumulated gold to evolve
+export const AI_EVOLUTION_THRESHOLD = 200;
+
+export const UPGRADES = {
+    CANNON: {
+        id: 'cannon',
+        name: 'Cañón Defensivo',
+        cost: 200,
+        damage: 15,
+        range: 250,
+        cooldown: 3000, // 3 seconds
+    },
+    WALL: {
+        id: 'wall',
+        name: 'Muralla Reforzada',
+        cost: 150,
+        hpBonus: 50,
+    }
+};
+
+export const DIFFICULTIES = {
+    EASY: {
+        id: 'easy',
+        name: 'FÁCIL',
+        goldRate: 0.5,
+        aiBuyDelay: 3000,
+        aiEvolveThreshold: 250,
+        hpMultiplier: 1,
+    },
+    NORMAL: {
+        id: 'normal',
+        name: 'NORMAL',
+        goldRate: 0.8,
+        aiBuyDelay: 2000,
+        aiEvolveThreshold: 200,
+        hpMultiplier: 1,
+    },
+    HARD: {
+        id: 'hard',
+        name: 'DIFÍCIL',
+        goldRate: 1.2,
+        aiBuyDelay: 500, // Almost immediate
+        aiEvolveThreshold: 150,
+        hpMultiplier: 1.2,
+    }
+};
 
 export const UNITS = {
     // AGE 1
