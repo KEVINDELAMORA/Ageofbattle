@@ -6,6 +6,7 @@ import {
   BASE_HP,
   PLAYER_GOLD_RATE,
   ENEMY_GOLD_RATE,
+  INITIAL_GOLD,
   GOLD_PER_KILL,
   UNITS,
   FPS,
@@ -21,8 +22,8 @@ function App() {
   const [gameState, setGameState] = useState('playing'); // playing, victory, defeat
 
   // Game State
-  const [playerBase, setPlayerBase] = useState({ hp: BASE_HP, maxHp: BASE_HP, gold: 100, age: 1, upgrades: [] });
-  const [enemyBase, setEnemyBase] = useState({ hp: BASE_HP, maxHp: BASE_HP, gold: 100, age: 1, accumulatedGold: 0, upgrades: [] });
+  const [playerBase, setPlayerBase] = useState({ hp: BASE_HP, maxHp: BASE_HP, gold: INITIAL_GOLD, age: 1, upgrades: [] });
+  const [enemyBase, setEnemyBase] = useState({ hp: BASE_HP, maxHp: BASE_HP, gold: INITIAL_GOLD, age: 1, accumulatedGold: 0, upgrades: [] });
   const [units, setUnits] = useState([]);
   const [projectiles, setProjectiles] = useState([]);
   const [stats, setStats] = useState({ goldGenerated: 0, enemiesKilled: 0, timeElapsed: 0 });
@@ -50,7 +51,7 @@ function App() {
 
   const resetGame = (diff = difficulty) => {
     setGameState('playing');
-    const initialBase = { hp: BASE_HP, maxHp: BASE_HP, gold: 100, age: 1, upgrades: [] };
+    const initialBase = { hp: BASE_HP, maxHp: BASE_HP, gold: INITIAL_GOLD, age: 1, upgrades: [] };
     // Apply difficulty HP multiplier to enemy if needed, though usually it's unit HP. 
     // Requirement says "Enemigos tienen +20% de vida". We'll handle that in spawning.
 
@@ -110,14 +111,16 @@ function App() {
 
         if (upgradeId === 'wall') {
           newMaxHp += UPGRADES.WALL.hpBonus;
-          newHp += UPGRADES.WALL.hpBonus; // Heal the bonus amount? Req: "Si la base ya tiene daño, NO la cura, solo aumenta el máximo". 
-          // Actually usually increasing max HP keeps current HP same, or adds the difference.
-          // Req: "Si la base ya tiene daño, NO la cura, solo aumenta el máximo".
-          // So if 80/100, becomes 80/150.
-          // But if full 100/100, becomes 100/150? That feels like a penalty.
-          // Let's interpret "No la cura" as "Current HP doesn't jump to Max HP".
-          // But usually you get the +50 HP added to current as well, otherwise you are just increasing the cap.
-          // Let's stick to strict interpretation: Only MaxHP increases.
+          // Only increase Max HP as per requirements
+        }
+
+        // Handle Cannon Upgrades
+        if (upgradeId.startsWith('cannon')) {
+          // Ensure we don't have duplicate cannon upgrades if logic allows, 
+          // but here we just add it. The UI should prevent buying out of order.
+          // We might want to remove previous cannon level to keep array clean, 
+          // or just check for the highest level.
+          // Let's keep all for history or just check highest.
         }
 
         return {
@@ -211,31 +214,87 @@ function App() {
     }
 
     // 3. Cannons Logic (Player & Enemy)
-    // Check player cannon
-    if (playerBaseRef.current.upgrades.includes('cannon')) {
-      // Simple cooldown check - store lastShot in base state or ref? 
-      // Let's add lastShot to base state for simplicity in next refactor, but for now use a local static-like check?
-      // Better: Add lastShot to base object.
-      // For now, let's assume we added it.
-      const now = timestamp;
-      if (!playerBaseRef.current.lastShot || now - playerBaseRef.current.lastShot > UPGRADES.CANNON.cooldown) {
-        // Find target
-        const target = unitsRef.current.find(u => u.side === 'enemy' && u.x < 100 + UPGRADES.CANNON.range);
-        if (target) {
-          // Fire!
-          setProjectiles(prev => [...prev, {
-            id: Math.random(),
-            x: 100,
-            y: GAME_HEIGHT - 120,
-            targetId: target.id,
-            speed: 5,
-            damage: UPGRADES.CANNON.damage,
-            side: 'player'
-          }]);
-          setPlayerBase(prev => ({ ...prev, lastShot: now }));
+    const handleCannons = (base, isPlayer, setBase) => {
+      // Determine Cannon Level
+      let cannonLevel = 0;
+      if (base.upgrades.includes('cannon_3')) cannonLevel = 3;
+      else if (base.upgrades.includes('cannon_2')) cannonLevel = 2;
+      else if (base.upgrades.includes('cannon_1')) cannonLevel = 1;
+
+      if (cannonLevel > 0) {
+        const now = timestamp;
+        const cannonConfig = cannonLevel === 3 ? UPGRADES.CANNON_3 : (cannonLevel === 2 ? UPGRADES.CANNON_2 : UPGRADES.CANNON_1);
+
+        // Define Cannons
+        // Top Cannon: Relative (40, -50) -> Abs Y: BaseY + 50 - 50 = BaseY
+        // Base Y is GAME_HEIGHT - 150 = 250.
+        // Wait, BaseRenderer draws at (x, 250).
+        // Top Cannon visual is at (40, -50) relative to base origin (0,0 of group).
+        // So Top Cannon Y = 250 - 50 = 200.
+        // Bottom Cannon: Let's put it at (40, 50) relative. Y = 250 + 50 = 300.
+
+        const baseX = isPlayer ? 50 : GAME_WIDTH - 130;
+        const baseY = GAME_HEIGHT - 150;
+
+        const cannons = [];
+        // Cannon 1 (Top)
+        cannons.push({ id: 1, x: baseX + 40, y: baseY - 50 });
+
+        // Cannon 2 (Bottom) - Only for Lvl 2+
+        if (cannonLevel >= 2) {
+          cannons.push({ id: 2, x: baseX + 40, y: baseY + 50 });
         }
+
+        // Initialize lastShot state if missing
+        if (!base.lastShot) {
+          // lastShot will be an object { 1: 0, 2: 0 }
+          setBase(prev => ({ ...prev, lastShot: {} }));
+          return;
+        }
+
+        cannons.forEach(cannon => {
+          const lastFire = base.lastShot[cannon.id] || 0;
+          if (now - lastFire > cannonConfig.cooldown) {
+            // Find target
+            // Player shoots Right, Enemy shoots Left
+            const target = unitsRef.current.find(u => {
+              if (u.side === (isPlayer ? 'enemy' : 'player') && u.hp > 0) {
+                const dist = Math.abs(u.x - cannon.x); // Simple X distance check for range
+                return dist <= cannonConfig.range;
+              }
+              return false;
+            });
+
+            if (target) {
+              // Fire!
+              setProjectiles(prev => [...prev, {
+                id: Math.random(),
+                x: cannon.x,
+                y: cannon.y,
+                targetId: target.id,
+                speed: 5,
+                damage: cannonConfig.damage,
+                side: isPlayer ? 'player' : 'enemy',
+                type: 'cannonball'
+              }]);
+
+              setBase(prev => ({
+                ...prev,
+                lastShot: {
+                  ...prev.lastShot,
+                  [cannon.id]: now
+                }
+              }));
+            }
+          }
+        });
       }
-    }
+    };
+
+    handleCannons(playerBaseRef.current, true, setPlayerBase);
+    // Enemy cannon logic can be similar if they buy upgrades, but currently AI only buys units/evolves.
+    // If we want AI to have cannons, we'd need to add AI upgrade logic. 
+    // For now, only Player has the new cannon system as per request details.
 
     // 4. Projectiles Logic
     setProjectiles(prev => {
@@ -305,20 +364,39 @@ function App() {
 
         if (target && minDist <= unit.range) {
           if (timestamp - unit.lastAttackTime >= unit.attackCooldown) {
-            target.hp -= unit.damage;
+            // Attack!
             unit.lastAttackTime = timestamp;
-            if (target.hp <= 0) {
-              if (isPlayer) {
-                const reward = target.reward || 10;
-                setPlayerBase(prev => ({ ...prev, gold: prev.gold + reward }));
-                setStats(prev => ({ ...prev, enemiesKilled: prev.enemiesKilled + 1 }));
-              } else {
-                const reward = target.reward || 10;
-                setEnemyBase(prev => ({
-                  ...prev,
-                  gold: prev.gold + reward,
-                  accumulatedGold: prev.accumulatedGold + reward
-                }));
+
+            if (unit.type === 'range') {
+              // Spawn Projectile
+              setProjectiles(prev => [...prev, {
+                id: Math.random(),
+                x: unit.x,
+                y: GAME_HEIGHT - 80, // Approximate unit center height (ground is at HEIGHT-50, unit is ~30-50 tall)
+                targetId: target.id,
+                speed: 8, // Fast arrow
+                damage: unit.damage,
+                side: unit.side,
+                type: 'arrow'
+              }]);
+            } else {
+              // Melee - Instant Damage
+              target.hp -= unit.damage;
+
+              // Handle Kill Logic (Duplicated from original, but clean)
+              if (target.hp <= 0) {
+                if (isPlayer) {
+                  const reward = target.reward || 10;
+                  setPlayerBase(prev => ({ ...prev, gold: prev.gold + reward }));
+                  setStats(prev => ({ ...prev, enemiesKilled: prev.enemiesKilled + 1 }));
+                } else {
+                  const reward = target.reward || 10;
+                  setEnemyBase(prev => ({
+                    ...prev,
+                    gold: prev.gold + reward,
+                    accumulatedGold: prev.accumulatedGold + reward
+                  }));
+                }
               }
             }
           }
@@ -520,13 +598,63 @@ function App() {
 
         {/* Upgrades Controls */}
         <div className="flex gap-4 border-l-2 border-gray-700 pl-8">
-          <UpgradeButton
-            upgrade={UPGRADES.CANNON}
-            currentGold={playerBase.gold}
-            purchased={playerBase.upgrades.includes('cannon')}
-            onClick={() => buyUpgrade('cannon')}
-            icon="💣"
-          />
+          {/* Progressive Cannon Buttons */}
+          {(() => {
+            const hasLvl1 = playerBase.upgrades.includes('cannon_1');
+            const hasLvl2 = playerBase.upgrades.includes('cannon_2');
+            const hasLvl3 = playerBase.upgrades.includes('cannon_3');
+            const isAge2 = playerBase.age >= 2;
+
+            // Logic to show buttons
+            // If no cannon: Show Lvl 1
+            // If Lvl 1: Show Lvl 2 (Disabled if Age < 2)
+            // If Lvl 2: Show Lvl 3
+            // If Lvl 3: Show "Maxed" or nothing? Let's show Lvl 3 purchased.
+
+            if (!hasLvl1) {
+              return (
+                <UpgradeButton
+                  upgrade={UPGRADES.CANNON_1}
+                  currentGold={playerBase.gold}
+                  purchased={false}
+                  onClick={() => buyUpgrade('cannon_1')}
+                  icon="💣"
+                />
+              );
+            } else if (!hasLvl2) {
+              return (
+                <UpgradeButton
+                  upgrade={UPGRADES.CANNON_2}
+                  currentGold={playerBase.gold}
+                  purchased={false}
+                  onClick={() => buyUpgrade('cannon_2')}
+                  icon="💣"
+                  disabledReason={!isAge2 ? "Requiere: Edad 2" : null}
+                />
+              );
+            } else if (!hasLvl3) {
+              return (
+                <UpgradeButton
+                  upgrade={UPGRADES.CANNON_3}
+                  currentGold={playerBase.gold}
+                  purchased={false}
+                  onClick={() => buyUpgrade('cannon_3')}
+                  icon="💣"
+                />
+              );
+            } else {
+              return (
+                <UpgradeButton
+                  upgrade={UPGRADES.CANNON_3}
+                  currentGold={playerBase.gold}
+                  purchased={true}
+                  onClick={() => { }}
+                  icon="💣"
+                />
+              );
+            }
+          })()}
+
           <UpgradeButton
             upgrade={UPGRADES.WALL}
             currentGold={playerBase.gold}
@@ -570,8 +698,9 @@ const UnitButton = ({ unit, currentGold, onClick }) => {
   );
 };
 
-const UpgradeButton = ({ upgrade, currentGold, purchased, onClick, icon }) => {
+const UpgradeButton = ({ upgrade, currentGold, purchased, onClick, icon, disabledReason }) => {
   const canAfford = currentGold >= upgrade.cost;
+  const isDisabled = !canAfford || disabledReason;
 
   if (purchased) {
     return (
@@ -586,10 +715,10 @@ const UpgradeButton = ({ upgrade, currentGold, purchased, onClick, icon }) => {
   return (
     <button
       onClick={onClick}
-      disabled={!canAfford}
+      disabled={isDisabled}
       className={`
-                flex flex-col items-center justify-center w-28 h-28 rounded-xl border-4 transition-all
-                ${canAfford
+                flex flex-col items-center justify-center w-28 h-28 rounded-xl border-4 transition-all relative
+                ${!isDisabled
           ? 'bg-orange-900 border-orange-500 hover:bg-orange-800 hover:scale-105 cursor-pointer shadow-lg shadow-orange-900/50'
           : 'bg-gray-800 border-gray-700 opacity-60 cursor-not-allowed'}
             `}
@@ -597,6 +726,11 @@ const UpgradeButton = ({ upgrade, currentGold, purchased, onClick, icon }) => {
       <span className="text-3xl mb-1">{icon}</span>
       <span className="font-bold text-xs text-center">{upgrade.name}</span>
       <span className="text-yellow-400 font-bold text-sm">{upgrade.cost} G</span>
+      {disabledReason && (
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-2 rounded-lg">
+          <span className="text-red-400 text-xs font-bold text-center">{disabledReason}</span>
+        </div>
+      )}
     </button>
   );
 };
